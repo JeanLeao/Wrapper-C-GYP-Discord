@@ -17,6 +17,9 @@ const lobbySecret = "discord-social-wrapper-dev-lobby"
 
 console.log("Exports do binding:", Object.keys(discord));
 console.log("initClient:", discord.initClient(String(applicationId)));
+discord.onVoiceEvent((event) => {
+  console.log("voiceEvent:", event);
+});
 console.log("authorize:", discord.authorize());
 
 let shuttingDown = false;

@@ -22,6 +22,31 @@ std::atomic<float> lastCapturedDbfs{-100.0f};
 std::atomic<float> lastReceivedDbfs{-100.0f};
 std::atomic<int32_t> lastCapturedSampleRate{0};
 std::atomic<uint64_t> lastCapturedChannels{0};
+Napi::ThreadSafeFunction voiceEventCallback;
+
+struct VoiceEvent {
+  std::string type;
+  std::string status;
+  std::string error;
+  uint64_t lobbyId = 0;
+  uint64_t userId = 0;
+  uint64_t samplesPerChannel = 0;
+  uint64_t channels = 0;
+  int32_t sampleRate = 0;
+  int32_t errorDetail = 0;
+  float dbfs = -100.0f;
+  bool active = false;
+  bool added = false;
+  bool inputDetected = false;
+  bool hasStatus = false;
+  bool hasError = false;
+  bool hasLobbyId = false;
+  bool hasUserId = false;
+  bool hasAudio = false;
+  bool hasActive = false;
+  bool hasAdded = false;
+  bool hasInputDetected = false;
+};
 
 float CalculateDbfs(const int16_t* data, uint64_t sampleCount) {
   if (!data || sampleCount == 0) {
@@ -40,6 +65,57 @@ float CalculateDbfs(const int16_t* data, uint64_t sampleCount) {
   }
 
   return static_cast<float>(20.0 * std::log10(rms));
+}
+
+void EmitVoiceEvent(VoiceEvent event) {
+  if (!voiceEventCallback) {
+    return;
+  }
+
+  auto* payload = new VoiceEvent(std::move(event));
+  auto status = voiceEventCallback.NonBlockingCall(
+    payload,
+    [](Napi::Env env, Napi::Function callback, VoiceEvent* payload) {
+      std::unique_ptr<VoiceEvent> event(payload);
+      Napi::Object object = Napi::Object::New(env);
+
+      object.Set("type", Napi::String::New(env, event->type));
+
+      if (event->hasStatus) {
+        object.Set("status", Napi::String::New(env, event->status));
+      }
+      if (event->hasError) {
+        object.Set("error", Napi::String::New(env, event->error));
+        object.Set("errorDetail", Napi::Number::New(env, event->errorDetail));
+      }
+      if (event->hasLobbyId) {
+        object.Set("lobbyId", Napi::String::New(env, std::to_string(event->lobbyId)));
+      }
+      if (event->hasUserId) {
+        object.Set("userId", Napi::String::New(env, std::to_string(event->userId)));
+      }
+      if (event->hasAudio) {
+        object.Set("dbfs", Napi::Number::New(env, event->dbfs));
+        object.Set("sampleRate", Napi::Number::New(env, event->sampleRate));
+        object.Set("channels", Napi::Number::New(env, event->channels));
+        object.Set("samplesPerChannel", Napi::Number::New(env, event->samplesPerChannel));
+      }
+      if (event->hasActive) {
+        object.Set("active", Napi::Boolean::New(env, event->active));
+      }
+      if (event->hasAdded) {
+        object.Set("added", Napi::Boolean::New(env, event->added));
+      }
+      if (event->hasInputDetected) {
+        object.Set("inputDetected", Napi::Boolean::New(env, event->inputDetected));
+      }
+
+      callback.Call({object});
+    });
+
+  if (status != napi_ok) {
+    delete payload;
+  }
 }
 
 uint64_t ParseApplicationId(const std::string& value) {
@@ -86,18 +162,24 @@ Napi::Value InitClient(const Napi::CallbackInfo& info) {
   client->SetVoiceParticipantChangedCallback([](uint64_t lobbyId,
                                                 uint64_t userId,
                                                 bool added) {
-    printf("[Voice] Lobby %llu | usuario %llu %s da call\n",
-           lobbyId,
-           userId,
-           added ? "entrou" : "saiu");
-    fflush(stdout);
+    VoiceEvent event{};
+    event.type = "voiceParticipant";
+    event.lobbyId = lobbyId;
+    event.userId = userId;
+    event.added = added;
+    event.hasLobbyId = true;
+    event.hasUserId = true;
+    event.hasAdded = true;
+    EmitVoiceEvent(std::move(event));
   });
 
   client->SetNoAudioInputThreshold(-60.0f);
   client->SetNoAudioInputCallback([](bool inputDetected) {
-    printf("[Voice] Microfone %s audio acima do limite\n",
-           inputDetected ? "recebendo" : "sem");
-    fflush(stdout);
+    VoiceEvent event{};
+    event.type = "noAudioInput";
+    event.inputDetected = inputDetected;
+    event.hasInputDetected = true;
+    EmitVoiceEvent(std::move(event));
   });
 
   client->SetStatusChangedCallback([](auto status, auto error, auto errorDetail) {
@@ -157,9 +239,6 @@ void AttachCallCallbacks(discordpp::Call& call) {
   call.SetStatusChangedCallback([](discordpp::Call::Status status,
                                    discordpp::Call::Error error,
                                    int32_t errorDetail) {
-    printf("[Voice] Status da call: %s\n",
-           discordpp::Call::StatusToString(status).c_str());
-
     if (error != discordpp::Call::Error::None) {
       printf("[Voice] Erro da call: %s (%d)\n",
              discordpp::Call::ErrorToString(error).c_str(),
@@ -167,18 +246,37 @@ void AttachCallCallbacks(discordpp::Call& call) {
     }
 
     fflush(stdout);
+
+    VoiceEvent event{};
+    event.type = "callStatus";
+    event.status = discordpp::Call::StatusToString(status);
+    event.hasStatus = true;
+    if (error != discordpp::Call::Error::None) {
+      event.error = discordpp::Call::ErrorToString(error);
+      event.errorDetail = errorDetail;
+      event.hasError = true;
+    }
+    EmitVoiceEvent(std::move(event));
   });
 
   call.SetParticipantChangedCallback([](uint64_t userId, bool added) {
-    printf("[Voice] Participante %llu %s\n", userId, added ? "entrou" : "saiu");
-    fflush(stdout);
+    VoiceEvent event{};
+    event.type = "participant";
+    event.userId = userId;
+    event.added = added;
+    event.hasUserId = true;
+    event.hasAdded = true;
+    EmitVoiceEvent(std::move(event));
   });
 
   call.SetSpeakingStatusChangedCallback([](uint64_t userId, bool isPlayingSound) {
-    printf("[Voice] Usuario %llu %s\n",
-           userId,
-           isPlayingSound ? "falando" : "parou de falar");
-    fflush(stdout);
+    VoiceEvent event{};
+    event.type = "speaking";
+    event.userId = userId;
+    event.active = isPlayingSound;
+    event.hasUserId = true;
+    event.hasActive = true;
+    EmitVoiceEvent(std::move(event));
   });
 
   call.SetSelfMute(false);
@@ -248,13 +346,16 @@ Napi::Value StartLobbyVoice(const Napi::CallbackInfo& info) {
           lastReceivedDbfs.store(dbfs);
 
           if (callbackCount % 100 == 1) {
-            printf("[Voice][RX] user=%llu rate=%d canais=%llu amostras=%llu nivel=%.1f dBFS\n",
-                   userId,
-                   sampleRate,
-                   channels,
-                   samplesPerChannel,
-                   dbfs);
-            fflush(stdout);
+            VoiceEvent event{};
+            event.type = "receivedAudio";
+            event.userId = userId;
+            event.dbfs = dbfs;
+            event.sampleRate = sampleRate;
+            event.channels = channels;
+            event.samplesPerChannel = samplesPerChannel;
+            event.hasUserId = true;
+            event.hasAudio = true;
+            EmitVoiceEvent(std::move(event));
           }
         },
         [](int16_t* data,
@@ -270,12 +371,14 @@ Napi::Value StartLobbyVoice(const Napi::CallbackInfo& info) {
           lastCapturedDbfs.store(dbfs);
 
           if (callbackCount % 100 == 1) {
-            printf("[Voice][MIC] rate=%d canais=%llu amostras=%llu nivel=%.1f dBFS\n",
-                   sampleRate,
-                   channels,
-                   samplesPerChannel,
-                   dbfs);
-            fflush(stdout);
+            VoiceEvent event{};
+            event.type = "micAudio";
+            event.dbfs = dbfs;
+            event.sampleRate = sampleRate;
+            event.channels = channels;
+            event.samplesPerChannel = samplesPerChannel;
+            event.hasAudio = true;
+            EmitVoiceEvent(std::move(event));
           }
         });
 
@@ -329,6 +432,29 @@ Napi::Value GetClientStatus(const Napi::CallbackInfo& info) {
   const auto status = static_cast<discordpp::Client::Status>(currentClientStatus.load());
 
   return Napi::String::New(env, discordpp::Client::StatusToString(status));
+}
+
+Napi::Value OnVoiceEvent(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  if (info.Length() < 1 || !info[0].IsFunction()) {
+    Napi::TypeError::New(env, "callback de voz e obrigatorio").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  if (voiceEventCallback) {
+    voiceEventCallback.Release();
+    voiceEventCallback = Napi::ThreadSafeFunction();
+  }
+
+  voiceEventCallback = Napi::ThreadSafeFunction::New(
+    env,
+    info[0].As<Napi::Function>(),
+    "voiceEventCallback",
+    0,
+    1);
+
+  return Napi::Boolean::New(env, true);
 }
 
 Napi::Value SetSelfMute(const Napi::CallbackInfo& info) {
@@ -522,6 +648,11 @@ Napi::Value DestroyClient(const Napi::CallbackInfo& info) {
     client.reset();
   }
 
+  if (voiceEventCallback) {
+    voiceEventCallback.Release();
+    voiceEventCallback = Napi::ThreadSafeFunction();
+  }
+
   return Napi::Boolean::New(env, true);
 }
 
@@ -530,6 +661,7 @@ Napi::Object InitModule(Napi::Env env, Napi::Object exports) {
   exports.Set("authorize", Napi::Function::New(env, Authorize));
   exports.Set("sendMessage", Napi::Function::New(env, SendMessage));
   exports.Set("startLobbyVoice", Napi::Function::New(env, StartLobbyVoice));
+  exports.Set("onVoiceEvent", Napi::Function::New(env, OnVoiceEvent));
   exports.Set("getClientStatus", Napi::Function::New(env, GetClientStatus));
   exports.Set("getVoiceStats", Napi::Function::New(env, GetVoiceStats));
   exports.Set("setSelfMute", Napi::Function::New(env, SetSelfMute));
