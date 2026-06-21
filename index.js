@@ -2,6 +2,7 @@ const path = require("node:path");
 const sdkBinPath = path.join(__dirname, "lib", "discord_social_sdk", "bin", "release");
 process.env.PATH = `${sdkBinPath}${path.delimiter}${process.env.PATH || ""}`;
 const discord = require("./build/Release/discord_social.node");
+const env = require("dotenv").config();
 if (process.argv.includes("--load-only")) {
   console.log("Binding carregado:", Object.keys(discord));
   process.exit(0);
