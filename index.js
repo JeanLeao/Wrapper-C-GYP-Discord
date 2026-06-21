@@ -9,10 +9,11 @@ if (process.argv.includes("--load-only")) {
 }
 const applicationId = process.env.DISCORD_APPLICATION_ID;
 if (!applicationId) {
-  console.error("Uso: node index.js <DISCORD_APPLICATION_ID>");
-  console.error("Ou defina DISCORD_APPLICATION_ID no ambiente.");
+  console.error("Uso: defina DISCORD_APPLICATION_ID no ambiente.");
+  console.error("Opcional: defina LOBBY_SECRET para criar/entrar no lobby de voz.");
   process.exit(1);
 }
+const lobbySecret = "discord-social-wrapper-dev-lobby"
 
 console.log("Exports do binding:", Object.keys(discord));
 console.log("initClient:", discord.initClient(String(applicationId)));
@@ -29,7 +30,7 @@ const interval = setInterval(() => {
   }
 }, 10);
 
-const messageTimeout = null;
+const timeouts = [];
 
 function shutdown(code = 0) {
   if (shuttingDown) {
@@ -39,10 +40,11 @@ function shutdown(code = 0) {
 
   shuttingDown = true;
   clearInterval(interval);
-  if (messageTimeout) {
-    clearTimeout(messageTimeout);
-  }
+  for (const timeout of timeouts) clearTimeout(timeout);
   try {
+    if (lobbySecret) {
+      discord.endLobbyVoice();
+    }
     discord.destroyClient();
   } catch (error) {
     console.error(error);
@@ -56,9 +58,24 @@ function shutdown(code = 0) {
 
 }
 
-setTimeout(() => {
-  discord.sendMessage("Lipinho", "Hello from Node.js!");
-}, 1000*20);
+if (lobbySecret) {
+  let startedLobbyVoice = false;
+  timeouts.push(setInterval(() => {
+    if (startedLobbyVoice) return;
+    const status = discord.getClientStatus();
+    if (status !== "Ready") return;
+    startedLobbyVoice = true;
+    console.log("startLobbyVoice:", discord.startLobbyVoice(lobbySecret));
+  }, 1000));
+
+  timeouts.push(setInterval(() => {
+    try {
+      console.log("voiceStats:", discord.getVoiceStats());
+    } catch (error) {
+      console.error(error);
+    }
+  }, 5000));
+}
 
 process.once("SIGINT", shutdown);
 process.once("SIGTERM", shutdown);
