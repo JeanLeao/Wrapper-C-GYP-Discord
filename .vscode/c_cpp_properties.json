@@ -1,0 +1,19 @@
+{
+  "configurations": [
+    {
+      "name": "Windows",
+      "includePath": [
+        "${workspaceFolder}/src",
+        "${workspaceFolder}/lib/discord_social_sdk/include",
+        "${workspaceFolder}/node_modules/node-addon-api",
+        "${env:LOCALAPPDATA}/node-gyp/Cache/24.11.1/include/node"
+      ],
+      "defines": [
+        "NAPI_DISABLE_CPP_EXCEPTIONS"
+      ],
+      "cppStandard": "c++17",
+      "intelliSenseMode": "windows-msvc-x64"
+    }
+  ],
+  "version": 4
+}
